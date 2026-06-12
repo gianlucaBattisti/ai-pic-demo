@@ -26,7 +26,12 @@ let uploadedImages = []; // { id, name, src }
     const remaining = 20 - uploadedImages.length;
     valid.slice(0, remaining).forEach(file => {
       const reader = new FileReader();
-      reader.onload = e => addImage({ id: Date.now() + Math.random(), name: file.name, src: e.target.result });
+      reader.onload = e => addImage({
+        id: Date.now() + Math.random(),
+        name: file.name,
+        src: e.target.result,
+        file: file
+      });
       reader.readAsDataURL(file);
     });
     fileInput.value = '';
@@ -105,10 +110,9 @@ let uploadedImages = []; // { id, name, src }
             `Analisi immagine ${i + 1}/${uploadedImages.length}`;
 
             try {
-            const score = await analyzeImage(img.src);
-            const tier = getTier(score);
-
-            result[tier].push(img);
+              const score = await analyzeImage(img);
+              const tier = getTier(score);
+              result[tier].push(img);
             } catch (e) {
             console.error("Errore:", e);
             result["C"].push(img);
@@ -185,33 +189,57 @@ let uploadedImages = []; // { id, name, src }
     setTimeout(() => { btn.innerHTML = orig; }, 2000);
   }
 
-  async function analyzeImage(imageSrc) {
+  async function analyzeImage(img) {
   try {
-    const blob = await (await fetch(imageSrc)).blob();
 
     //const res = await fetch("/.netlify/functions/analyze", {
+    const base64 = await toBase64(img.file);
+
     const res = await fetch("http://localhost:3000/api/hf-vision", {
       method: "POST",
       headers: {
-        "Content-Type": "application/octet-stream"
+        "Content-Type": "application/json"
       },
-      body: blob
+      body: JSON.stringify({ image: base64 })
     });
 
     const data = await res.json();
 
-    console.log("HF:", data);
+    console.log("HF response:", data);
 
-    const score = data?.[0]?.score ? data[0].score * 100 : 50;
+// ❌ error handling
+    if (data.error) {
+      throw new Error(data.error);
+    }
 
-    return score;
+// ✅ estrai risultato chat model
+    const raw = data?.choices?.[0]?.message?.content;
 
-  } catch (e) {
-    console.error(e);
+// fallback safety
+    if (!raw) return 50;
+
+// converti in numero
+    const score = parseFloat(raw);
+
+// safety clamp
+    if (isNaN(score)) return 50;
+
+    return Math.max(0, Math.min(100, score));
+
+  } catch (err) {
+    console.error(err);
     return 50;
   }
-}
+  }
 
+function toBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
 
 
 function getTier(score) {
